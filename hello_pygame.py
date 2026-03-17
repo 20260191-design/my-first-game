@@ -47,7 +47,7 @@ while running:
     screen.blit(fps_text, (10, 10))
 
     pygame.display.flip()
-    clock.tick(120)
+    clock.tick(60)
 
 pygame.quit()
 sys.exit()
