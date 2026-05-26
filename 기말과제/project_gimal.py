@@ -34,6 +34,7 @@ COLOR_PLAYER = (80, 220, 120)
 COLOR_ENEMY = (220, 80, 80)
 COLOR_BULLET = (255, 240, 120)
 COLOR_TEXT = (255, 255, 255)
+COLOR_BOSS = (180, 60, 220)
 
 # BSP
 MIN_LEAF_SIZE = 16
@@ -116,16 +117,17 @@ class Dungeon:
 
         queue = deque([root])
 
-        MAX_ROOMS = 12
+        MAX_SPLITS = 18
+        split_count = 0
 
-        while queue and len(queue) < MAX_ROOMS:
+        while queue and split_count < MAX_SPLITS:
             node = queue.popleft()
 
-            # 일정 확률로만 분할
-            if random.random() < 0.75:
+            if random.random() < 0.8:
                 if node.split():
                     queue.append(node.left)
                     queue.append(node.right)
+                    split_count += 1
 
         leaves = []
         self.collect_leaves(root, leaves)
@@ -134,6 +136,10 @@ class Dungeon:
             self.create_room(leaf)
 
         self.connect_rooms(root)
+        
+        if len(self.rooms) < 6:
+            self.generate()
+            return
 
     def collect_leaves(self, node, out):
         if node is None:
@@ -260,7 +266,8 @@ class Player:
         self.y = y
 
         self.radius = 12
-        self.speed = 4
+        self.base_speed = 4
+        self.speed = self.base_speed
 
         self.hp = 6
 
@@ -348,6 +355,17 @@ class Player:
             ),
             self.radius,
         )
+        if portal_active:
+
+            pygame.draw.circle(
+                screen,
+                (120, 80, 255),
+                (
+                    int(player.x - camera_x),
+                    int(player.y - camera_y - 60),
+                ),
+                20,
+            )
 
 
 # =====================================================
@@ -400,6 +418,25 @@ class Enemy:
         pygame.draw.circle(
             screen,
             COLOR_ENEMY,
+            (
+                int(self.x - camera_x),
+                int(self.y - camera_y),
+            ),
+            self.radius,
+        )
+
+class Boss(Enemy):
+    def __init__(self, x, y, room):
+        super().__init__(x, y, room)
+
+        self.radius = 28
+        self.speed = 1
+        self.hp = 25
+
+    def draw(self, screen, camera_x, camera_y):
+        pygame.draw.circle(
+            screen,
+            COLOR_BOSS,
             (
                 int(self.x - camera_x),
                 int(self.y - camera_y),
@@ -466,7 +503,7 @@ class Bullet:
             d = distance(self.x, self.y, enemy.x, enemy.y)
 
             if d < self.radius + enemy.radius:
-                enemy.hp -= 1
+                enemy.hp -= player_damage
                 self.dead = True
 
                 if enemy.hp <= 0:
@@ -488,6 +525,95 @@ class Bullet:
 
 
 # =====================================================
+# 상점 UI
+# =====================================================
+def draw_shop(screen):
+
+    overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 180))
+    screen.blit(overlay, (0, 0))
+
+    box_w = 600
+    box_h = 400
+
+    box_x = SCREEN_WIDTH // 2 - box_w // 2
+    box_y = SCREEN_HEIGHT // 2 - box_h // 2
+
+    pygame.draw.rect(
+        screen,
+        (40, 40, 60),
+        (box_x, box_y, box_w, box_h),
+        border_radius=12,
+    )
+
+    pygame.draw.rect(
+        screen,
+        (200, 200, 255),
+        (box_x, box_y, box_w, box_h),
+        3,
+        border_radius=12,
+    )
+
+    title = font.render("상점", True, COLOR_TEXT)
+    screen.blit(title, (box_x + 20, box_y + 20))
+
+    items = [
+
+        f"[1] 공격력 "
+        + (
+            "MAX"
+            if player_damage >= MAX_DAMAGE
+            else f"({player_damage}/{MAX_DAMAGE}) - {upgrade_prices['damage']} G"
+        ),
+
+        f"[2] 이동속도 "
+        + (
+            "MAX"
+            if player_speed_bonus >= MAX_SPEED_BONUS
+            else f"({player_speed_bonus:.1f}/{MAX_SPEED_BONUS}) - {upgrade_prices['speed']} G"
+        ),
+
+        f"[3] 연사속도 "
+        + (
+            "MAX"
+            if player_fire_rate_bonus >= MAX_FIRE_RATE_BONUS
+            else f"({player_fire_rate_bonus}/{MAX_FIRE_RATE_BONUS}) - {upgrade_prices['firerate']} G"
+        ),
+
+        f"[4] 체력 회복 "
+        + (
+            "MAX"
+            if player.hp >= MAX_HP
+            else f"({player.hp}/{MAX_HP}) - {upgrade_prices['heal']} G"
+        ),
+    ]
+
+    for i, text in enumerate(items):
+
+        txt = font.render(text, True, COLOR_TEXT)
+
+        screen.blit(
+            txt,
+            (box_x + 40, box_y + 100 + i * 60)
+        )
+
+    gold_txt = font.render(
+        f"현재 골드: {gold}",
+        True,
+        (255, 220, 120),
+    )
+
+    screen.blit(gold_txt, (box_x + 40, box_y + 320))
+
+    close_txt = font.render(
+        "TAB : 닫기",
+        True,
+        (180, 180, 180),
+    )
+
+    screen.blit(close_txt, (box_x + 420, box_y + 320))
+    
+# =====================================================
 # 게임 생성
 # =====================================================
 dungeon = Dungeon()
@@ -502,23 +628,55 @@ player = Player(
 )
 
 gold = 0
+shop_open = False
+upgrade_prices = {
+    "damage": 30,
+    "speed": 25,
+    "firerate": 40,
+    "heal": 50,
+}
 bullets = []
 enemies = []
 
+floor_level = 1
+
+boss_dead = False
+portal_active = False
+
+player_damage = 1
+player_speed_bonus = 0
+player_fire_rate_bonus = 0
+
+MAX_DAMAGE = 10
+MAX_SPEED_BONUS = 5
+MAX_FIRE_RATE_BONUS = 140
+MAX_HP = 12
+
 # 적 생성
+boss_room = dungeon.rooms[-1]
+
 for room in dungeon.rooms[1:]:
 
     rx, ry, rw, rh = room
 
-    # 방마다 2~5마리
-    enemy_count = random.randint(2, 5)
+    # 보스방
+    if room == boss_room:
 
-    for _ in range(enemy_count):
+        bx = (rx + rw // 2) * TILE_SIZE
+        by = (ry + rh // 2) * TILE_SIZE
 
-        ex = random.randint(rx + 1, rx + rw - 2) * TILE_SIZE
-        ey = random.randint(ry + 1, ry + rh - 2) * TILE_SIZE
+        enemies.append(Boss(bx, by, room))
 
-        enemies.append(Enemy(ex, ey, room))
+    else:
+
+        enemy_count = random.randint(3, 6)
+
+        for _ in range(enemy_count):
+
+            ex = random.randint(rx + 1, rx + rw - 2) * TILE_SIZE
+            ey = random.randint(ry + 1, ry + rh - 2) * TILE_SIZE
+
+            enemies.append(Enemy(ex, ey, room))
 
 
 # =====================================================
@@ -535,6 +693,9 @@ while running:
             running = False
 
         if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_TAB:
+                shop_open = not shop_open
+                
             if event.key == pygame.K_r:
 
                 dungeon.generate()
@@ -548,13 +709,172 @@ while running:
                 bullets.clear()
                 enemies.clear()
 
+                boss_room = dungeon.rooms[-1]
+                
                 for room in dungeon.rooms[1:]:
+
                     rx, ry, rw, rh = room
 
-                    ex = random.randint(rx + 1, rx + rw - 2) * TILE_SIZE
-                    ey = random.randint(ry + 1, ry + rh - 2) * TILE_SIZE
+                    # 보스방
+                    if room == boss_room:
 
-                    enemies.append(Enemy(ex, ey, room))
+                        bx = (rx + rw // 2) * TILE_SIZE
+                        by = (ry + rh // 2) * TILE_SIZE
+
+                        enemies.append(Boss(bx, by, room))
+
+                    else:
+
+                        enemy_count = random.randint(3, 6)
+
+                        for _ in range(enemy_count):
+
+                            ex = random.randint(rx + 1, rx + rw - 2) * TILE_SIZE
+                            ey = random.randint(ry + 1, ry + rh - 2) * TILE_SIZE
+
+                            enemies.append(Enemy(ex, ey, room))
+                
+            if shop_open:
+
+                # 공격력
+                if event.key == pygame.K_1:
+
+                    if (
+                        gold >= upgrade_prices["damage"]
+                        and player_damage < MAX_DAMAGE
+                    ):
+                        gold -= upgrade_prices["damage"]
+                        player_damage += 1
+
+                # 이동속도
+                elif event.key == pygame.K_2:
+
+                    if (
+                        gold >= upgrade_prices["speed"]
+                        and player_speed_bonus < MAX_SPEED_BONUS
+                     ):
+                        gold -= upgrade_prices["speed"]
+                        player_speed_bonus += 0.5
+
+                        player.speed = (
+                            player.base_speed + player_speed_bonus
+                        )
+
+                # 연사속도
+                elif event.key == pygame.K_3:
+
+                    if (
+                        gold >= upgrade_prices["firerate"]
+                        and player_fire_rate_bonus < MAX_FIRE_RATE_BONUS
+                    ):
+                        gold -= upgrade_prices["firerate"]
+                        player_fire_rate_bonus += 20
+
+                        player.shoot_delay = max(
+                            60,
+                            200 - player_fire_rate_bonus
+                        )
+
+                # 회복
+                elif event.key == pygame.K_4:
+
+                    if (
+                        gold >= upgrade_prices["heal"]
+                        and player.hp < MAX_HP
+                    ):
+                        gold -= upgrade_prices["heal"]
+                        player.hp += 1
+            
+            # 다음 층 이동
+            if event.key == pygame.K_e and portal_active:
+
+                reward = random.choice([
+                    "damage",
+                    "speed",
+                    "firerate",
+                ])
+
+                if reward == "damage":
+
+                    if player_damage < MAX_DAMAGE:
+                        player_damage += 1
+
+                elif reward == "speed":
+
+                    if player_speed_bonus < MAX_SPEED_BONUS:
+                        player_speed_bonus += 0.5
+
+                elif reward == "firerate":
+
+                    if player_fire_rate_bonus < MAX_FIRE_RATE_BONUS:
+                        player_fire_rate_bonus += 30
+
+                # 플레이어 능력 적용
+                player.speed = player.base_speed + player_speed_bonus
+                player.shoot_delay = max(
+                    60,
+                    200 - player_fire_rate_bonus
+                )
+
+                # 다음 층
+                floor_level += 1
+
+                dungeon.generate()
+
+                start_room = dungeon.rooms[0]
+                rx, ry, rw, rh = start_room
+
+                player.x = (rx + rw // 2) * TILE_SIZE
+                player.y = (ry + rh // 2) * TILE_SIZE
+
+                bullets.clear()
+                enemies.clear()
+
+                boss_room = dungeon.rooms[-1]
+
+                for room in dungeon.rooms[1:]:
+
+                    rx, ry, rw, rh = room
+
+                    if room == boss_room:
+
+                        bx = (rx + rw // 2) * TILE_SIZE
+                        by = (ry + rh // 2) * TILE_SIZE
+
+                        boss = Boss(bx, by, room)
+
+                        boss.hp += floor_level * 5
+                        boss.speed += floor_level * 0.1
+
+                        enemies.append(boss)
+
+                    else:
+
+                        enemy_count = random.randint(
+                            3 + floor_level,
+                            6 + floor_level,
+                        )
+
+                        for _ in range(enemy_count):
+
+                            ex = random.randint(
+                                rx + 1,
+                                rx + rw - 2,
+                            ) * TILE_SIZE
+
+                            ey = random.randint(
+                                ry + 1,
+                                ry + rh - 2,
+                            ) * TILE_SIZE
+
+                            enemy = Enemy(ex, ey, room)
+
+                            enemy.hp += floor_level // 2
+
+                            enemies.append(enemy)
+
+                boss_dead = False
+                portal_active = False
 
     # 카메라
     camera_x = player.x - SCREEN_WIDTH // 2
@@ -597,22 +917,34 @@ while running:
                 room_cleared = False
                 break
         
-    player.update(
-        dungeon,
-        dt,
-        bullets,
-        current_room,
-        room_cleared,
-    )
+    if not shop_open:
 
-    for enemy in enemies:
-        enemy.update(player, dungeon)
+        player.update(
+            dungeon,
+            dt,
+            bullets,
+            current_room,
+            room_cleared,
+        )
 
-    for bullet in bullets:
-        bullet.update(dungeon, enemies)
+        for enemy in enemies:
+            enemy.update(player, dungeon)
+
+        for bullet in bullets:
+            bullet.update(dungeon, enemies)
 
     bullets = [b for b in bullets if not b.dead]
     enemies = [e for e in enemies if not e.dead]
+    boss_alive = False
+
+    for enemy in enemies:
+        if isinstance(enemy, Boss):
+            boss_alive = True
+            break
+
+    if not boss_alive and not portal_active:
+        boss_dead = True
+        portal_active = True
     
     # 렌더링
     screen.fill(COLOR_BG)
@@ -671,13 +1003,25 @@ while running:
     screen.blit(shadow, (0, 0))
 
     ui = font.render(
-        f"HP: {player.hp}  GOLD: {gold}  ENEMIES: {len(enemies)}   [R] 새 던전",
+        f"FLOOR: {floor_level}   HP: {player.hp}   GOLD: {gold}   ENEMIES: {len(enemies)}",
         True,
         COLOR_TEXT,
     )
+    
+    if portal_active:
+
+        txt = font.render(
+            "E 를 눌러 다음 층으로 이동",
+            True,
+            (200, 180, 255),
+        )
+
+        screen.blit(txt, (20, 50))
 
     screen.blit(ui, (20, 20))
 
+    if shop_open:
+        draw_shop(screen)
     pygame.display.flip()
 
 pygame.quit()
